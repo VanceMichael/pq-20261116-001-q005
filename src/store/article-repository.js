@@ -17,7 +17,8 @@ export class ArticleRepository {
       visibility=CASE WHEN missing_streak+1 >= ? THEN 'quiet' ELSE visibility END
       WHERE feed_id=? AND last_seen_at < ? AND visibility='visible'`);
     this.listArticles = database.prepare(`SELECT article_id, feed_id, canonical_url, title, published_at,
-      first_seen_at, last_seen_at, seen_count, missing_streak, visibility, review_state
+      first_seen_at, last_seen_at, seen_count, missing_streak, visibility, review_state,
+      detail_author, detail_summary, detail_obtained_at, detail_source_url, detail_list_seen_at
       FROM articles WHERE feed_id=? AND (? IS NULL OR visibility=?)
       ORDER BY COALESCE(published_at, last_seen_at) DESC, article_id DESC LIMIT ? OFFSET ?`);
     this.countByVisibility = database.prepare(`SELECT visibility, COUNT(*) AS count FROM articles
@@ -32,6 +33,16 @@ export class ArticleRepository {
       ci.source_index FROM capture_items ci JOIN captures c ON c.capture_id=ci.capture_id
       WHERE c.feed_id=? AND ci.article_id=? AND c.accepted=1
       ORDER BY c.capture_id DESC LIMIT ?`);
+    this.detailStateQuery = database.prepare(`SELECT article_id, feed_id, detail_author, detail_summary,
+      detail_obtained_at, detail_source_url, detail_list_seen_at, detail_fingerprint
+      FROM articles WHERE article_id=?`);
+    this.applyDetailUpdate = database.prepare(`UPDATE articles SET
+      detail_author=COALESCE(?, detail_author),
+      detail_summary=COALESCE(?, detail_summary),
+      detail_obtained_at=?, detail_source_url=?, detail_list_seen_at=?, detail_fingerprint=?
+      WHERE article_id=?`);
+    this.bumpDetailWatermarkUpdate = database.prepare(`UPDATE articles SET detail_list_seen_at=?
+      WHERE article_id=? AND (detail_list_seen_at IS NULL OR detail_list_seen_at < ?)`);
   }
 
   recordCapture(captureId, feed, records, capturedAt) {
@@ -70,6 +81,29 @@ export class ArticleRepository {
   timeline(feedId, articleId, limit = 50) {
     return this.timelineQuery.all(feedId, articleId, Math.max(1, Math.min(200, Number(limit) || 50)));
   }
+
+  detailState(articleId) {
+    const row = this.detailStateQuery.get(articleId);
+    return row ? {
+      articleId: row.article_id,
+      feedId: row.feed_id,
+      detailAuthor: row.detail_author,
+      detailSummary: row.detail_summary,
+      detailObtainedAt: row.detail_obtained_at,
+      detailSourceUrl: row.detail_source_url,
+      detailListSeenAt: row.detail_list_seen_at,
+      detailFingerprint: row.detail_fingerprint
+    } : null;
+  }
+
+  applyDetail(articleId, { author, summary, obtainedAt, sourceUrl, listSeenAt, fingerprint }) {
+    return Number(this.applyDetailUpdate.run(author, summary, obtainedAt, sourceUrl, listSeenAt,
+      fingerprint, articleId).changes) === 1;
+  }
+
+  bumpDetailWatermark(articleId, listSeenAt) {
+    return Number(this.bumpDetailWatermarkUpdate.run(listSeenAt, articleId, listSeenAt).changes) === 1;
+  }
 }
 
 function mapArticle(row) {
@@ -85,6 +119,11 @@ function mapArticle(row) {
     missingStreak: row.missing_streak,
     visibility: row.visibility,
     sourceIndex: row.source_index ?? null,
-    reviewState: row.review_state ?? "unreviewed"
+    reviewState: row.review_state ?? "unreviewed",
+    detailAuthor: row.detail_author ?? null,
+    detailSummary: row.detail_summary ?? null,
+    detailObtainedAt: row.detail_obtained_at ?? null,
+    detailSourceUrl: row.detail_source_url ?? null,
+    detailListSeenAt: row.detail_list_seen_at ?? null
   };
 }

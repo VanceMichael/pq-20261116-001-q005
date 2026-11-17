@@ -4,11 +4,12 @@ import { validateFeedId } from "../store/feed-repository.js";
 import { assessCapture, validateCapturedAt } from "./capture-policy.js";
 
 export class ImportService {
-  constructor({ database, feeds, captures, articles, clock = () => new Date() }) {
+  constructor({ database, feeds, captures, articles, details = null, clock = () => new Date() }) {
     this.database = database;
     this.feeds = feeds;
     this.captures = captures;
     this.articles = articles;
+    this.details = details;
     this.clock = clock;
   }
 
@@ -44,9 +45,11 @@ export class ImportService {
         duplicateCount: normalized.duplicateCount,
         reason: policy.reason
       });
+      let detailPlan = null;
       if (policy.accepted) {
         this.articles.recordCapture(captureId, feed, normalized.records, capturedAt);
         this.feeds.markAccepted(feedId, capturedAt, normalized.records.length);
+        detailPlan = this.details?.enqueueForCapture(feedId, capturedAt, this.clock().toISOString()) ?? null;
       }
       this.database.exec("COMMIT");
       return {
@@ -62,6 +65,7 @@ export class ImportService {
         duplicateCount: normalized.duplicateCount,
         reason: policy.reason,
         rejected: normalized.rejected,
+        details: detailPlan,
         stats: this.articles.stats(feedId)
       };
     } catch (error) {

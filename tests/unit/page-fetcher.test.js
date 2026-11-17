@@ -129,3 +129,35 @@ test("rejects invalid constructor budgets instead of silently disabling limits",
   assert.throws(() => new PageFetcher({ maxAttempts: 0 }), /maxAttempts/);
   assert.throws(() => new PageFetcher({ backoffBaseMs: -1 }), /backoffBaseMs/);
 });
+
+test("fetchPage enforces the same host allowlist and byte budget for detail pages", async () => {
+  const fetcher = new PageFetcher({
+    maxBytes: 1024,
+    fetchImpl: async (url) => url.includes("redirect")
+      ? new Response(null, { status: 302, headers: { location: "https://other-example.test/landing" } })
+      : htmlResponse("y".repeat(1025))
+  });
+  await assert.rejects(fetcher.fetchPage("https://news.example.test/a.shtml", ["news.example.test"]),
+    { code: "response_too_large" });
+  await assert.rejects(fetcher.fetchPage("https://news.example.test/redirect", ["news.example.test"]),
+    { code: "host_not_allowed" });
+  await assert.rejects(fetcher.fetchPage("https://other-example.test/a", ["news.example.test"]),
+    { code: "host_not_allowed" });
+});
+
+test("fetchPage returns the final URL after an allowlisted redirect", async () => {
+  const requested = [];
+  const fetcher = new PageFetcher({
+    fetchImpl: async (url) => {
+      requested.push(url);
+      return requested.length === 1
+        ? new Response(null, { status: 301, headers: { location: "/2026/final.shtml" } })
+        : htmlResponse("<article>full story</article>");
+    }
+  });
+  const result = await fetcher.fetchPage("https://news.example.test/story", ["news.example.test"]);
+  assert.equal(result.status, 200);
+  assert.equal(result.html, "<article>full story</article>");
+  assert.equal(result.requestedUrl, "https://news.example.test/story");
+  assert.equal(result.finalUrl, "https://news.example.test/2026/final.shtml");
+});

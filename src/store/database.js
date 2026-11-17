@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import { dirname, resolve } from "node:path";
 import { mkdirSync } from "node:fs";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export function openDatabase(filename) {
   const path = resolve(filename);
@@ -13,12 +13,8 @@ export function openDatabase(filename) {
   return database;
 }
 
-export function migrate(database) {
-  const version = database.prepare("PRAGMA user_version").get().user_version;
-  if (version > SCHEMA_VERSION) throw new Error(`database schema ${version} is newer than supported ${SCHEMA_VERSION}`);
-  if (version === SCHEMA_VERSION) return;
-  database.exec(`
-    BEGIN IMMEDIATE;
+// Frozen v1 schema; kept verbatim so migration tests can build genuine v1 databases.
+export const SCHEMA_V1 = `
     CREATE TABLE IF NOT EXISTS feeds (
       feed_id TEXT PRIMARY KEY,
       base_url TEXT NOT NULL,
@@ -92,9 +88,53 @@ export function migrate(database) {
       changed_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS review_events_article_time ON review_events(article_id, event_id DESC);
-    PRAGMA user_version = 1;
-    COMMIT;
-  `);
+`;
+
+const SCHEMA_V2 = `
+    ALTER TABLE articles ADD COLUMN detail_author TEXT;
+    ALTER TABLE articles ADD COLUMN detail_summary TEXT;
+    ALTER TABLE articles ADD COLUMN detail_obtained_at TEXT;
+    ALTER TABLE articles ADD COLUMN detail_source_url TEXT;
+    ALTER TABLE articles ADD COLUMN detail_list_seen_at TEXT;
+    ALTER TABLE articles ADD COLUMN detail_fingerprint TEXT;
+    CREATE TABLE IF NOT EXISTS detail_tasks (
+      task_id INTEGER PRIMARY KEY,
+      feed_id TEXT NOT NULL REFERENCES feeds(feed_id),
+      article_id INTEGER NOT NULL REFERENCES articles(article_id),
+      requested_url TEXT NOT NULL,
+      observed_title TEXT NOT NULL,
+      list_seen_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'succeeded', 'failed', 'superseded')),
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      requested_at TEXT NOT NULL,
+      finished_at TEXT,
+      obtained_at TEXT,
+      http_status INTEGER,
+      final_url TEXT,
+      fingerprint TEXT,
+      duplicate INTEGER NOT NULL DEFAULT 0 CHECK(duplicate IN (0, 1)),
+      error_code TEXT,
+      error_message TEXT,
+      UNIQUE(article_id, list_seen_at)
+    );
+    CREATE INDEX IF NOT EXISTS detail_tasks_feed_status ON detail_tasks(feed_id, status, task_id);
+    CREATE INDEX IF NOT EXISTS detail_tasks_article ON detail_tasks(article_id, task_id DESC);
+`;
+
+export function migrate(database) {
+  const version = database.prepare("PRAGMA user_version").get().user_version;
+  if (version > SCHEMA_VERSION) throw new Error(`database schema ${version} is newer than supported ${SCHEMA_VERSION}`);
+  if (version === SCHEMA_VERSION) return;
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    if (version < 1) database.exec(SCHEMA_V1);
+    if (version < 2) database.exec(SCHEMA_V2);
+    database.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function closeDatabase(database) {

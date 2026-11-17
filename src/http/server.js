@@ -96,6 +96,23 @@ async function routeRequest(request, response, archive) {
     const result = archive.listFetchAttempts(feedId, url.searchParams.get("limit"));
     return result ? writeJson(response, 200, { attempts: result }) : notFound(response);
   }
+  if (segments.length === 4 && segments[3] === "details" && request.method === "GET") {
+    const result = archive.listDetailTasks(feedId, {
+      status: url.searchParams.get("status"),
+      limit: url.searchParams.get("limit")
+    });
+    return result ? writeJson(response, 200, result) : notFound(response);
+  }
+  if (segments.length === 5 && segments[3] === "details" && segments[4] === "collect" && request.method === "POST") {
+    const body = await readOptionalJson(request);
+    const result = await archive.collectDetails(feedId, { limit: body.limit });
+    return result ? writeJson(response, 200, result) : notFound(response);
+  }
+  if (segments.length === 5 && segments[3] === "details" && segments[4] === "retry" && request.method === "POST") {
+    const body = await readOptionalJson(request);
+    const result = archive.retryDetails(feedId, { articleId: body.articleId ?? null });
+    return result ? writeJson(response, 200, result) : notFound(response);
+  }
   if (segments.length === 4 && segments[3] === "changes" && request.method === "GET") {
     const result = archive.feedChanges(feedId);
     return result ? writeJson(response, result.ready ? 200 : 409, result) : notFound(response);
@@ -129,6 +146,17 @@ function readText(request) {
 
 function readJson(request) {
   return readText(request).then((text) => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new TypeError("request body must be valid JSON");
+    }
+  });
+}
+
+function readOptionalJson(request) {
+  return readText(request).then((text) => {
+    if (!text.trim()) return {};
     try {
       return JSON.parse(text);
     } catch {

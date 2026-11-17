@@ -26,8 +26,11 @@ export class PageFetcher {
   }
 
   async fetchFeed(feed) {
-    const initial = new URL(feed.baseUrl);
-    const allowedHosts = feed.allowedHosts ?? [];
+    return this.fetchPage(feed.baseUrl, feed.allowedHosts ?? []);
+  }
+
+  async fetchPage(url, allowedHosts = []) {
+    const initial = url instanceof URL ? url : new URL(url);
     assertAllowed(initial, allowedHosts);
     const startedAt = new Date(this.now()).toISOString();
     const result = await this.requestWithRedirects(initial, allowedHosts);

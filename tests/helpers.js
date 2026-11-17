@@ -46,3 +46,31 @@ export const baseFeed = {
 export function captureTime(second) {
   return `2026-11-16T02:00:${String(second).padStart(2, "0")}.000Z`;
 }
+
+export function detailPage({ author, summary } = {}) {
+  const meta = [];
+  if (author !== undefined) meta.push(`<meta name="author" content="${author}">`);
+  if (summary !== undefined) meta.push(`<meta name="description" content="${summary}">`);
+  return `<!doctype html><html><head><title>detail</title>${meta.join("")}</head><body><article><p>正文</p></article></body></html>`;
+}
+
+export function detailFetcher(plan) {
+  const calls = [];
+  return {
+    calls,
+    async fetchPage(url, allowedHosts) {
+      calls.push({ url, allowedHosts });
+      const rule = typeof plan === "function" ? plan(url, calls.length) : plan[url];
+      if (!rule) throw Object.assign(new Error(`no synthetic detail for ${url}`), { code: "unexpected_url" });
+      if (rule.error) throw rule.error;
+      if (rule.gate) await rule.gate;
+      return {
+        status: rule.status ?? 200,
+        html: rule.html ?? detailPage(rule),
+        finalUrl: rule.finalUrl ?? url,
+        requestedUrl: url,
+        attemptCount: rule.attemptCount ?? 1
+      };
+    }
+  };
+}

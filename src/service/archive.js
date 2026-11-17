@@ -3,9 +3,11 @@ import { FeedRepository } from "../store/feed-repository.js";
 import { CaptureRepository } from "../store/capture-repository.js";
 import { ArticleRepository } from "../store/article-repository.js";
 import { FetchRepository } from "../store/fetch-repository.js";
+import { DetailRepository } from "../store/detail-repository.js";
 import { ImportService } from "../ingest/import-service.js";
 import { PageFetcher } from "../acquisition/page-fetcher.js";
 import { RefreshService } from "./refresh-service.js";
+import { DetailService } from "./detail-service.js";
 import { ChangeReportService } from "./change-report.js";
 import { HealthReportService } from "./health-report.js";
 import { ReviewRepository } from "../store/review-repository.js";
@@ -23,19 +25,32 @@ export class NewsArchive {
     this.articles = new ArticleRepository(this.database);
     this.fetches = new FetchRepository(this.database);
     this.reviews = new ReviewRepository(this.database);
+    this.details = new DetailRepository(this.database);
+    const fetcher = options.fetcher ?? new PageFetcher();
     this.imports = new ImportService({
       database: this.database,
       feeds: this.feeds,
       captures: this.captures,
       articles: this.articles,
+      details: this.details,
       clock: this.clock
     });
     this.refreshes = new RefreshService({
       feeds: this.feeds,
       fetches: this.fetches,
-      fetcher: options.fetcher ?? new PageFetcher(),
+      fetcher,
       imports: this.imports,
       clock: this.clock
+    });
+    this.detailService = new DetailService({
+      database: this.database,
+      feeds: this.feeds,
+      articles: this.articles,
+      details: this.details,
+      fetcher,
+      clock: this.clock,
+      concurrency: options.detailConcurrency ?? 4,
+      maxTasksPerRun: options.detailBatchSize ?? 20
     });
     this.changes = new ChangeReportService({ feeds: this.feeds, captures: this.captures, articles: this.articles });
     this.health = new HealthReportService({ feeds: this.feeds, fetches: this.fetches, clock: this.clock });
@@ -66,6 +81,7 @@ export class NewsArchive {
       health: latest ? latest.accepted ? "healthy" : "degraded" : "awaiting_capture",
       latestAttempt: latest,
       statistics: this.articles.stats(feedId),
+      details: this.detailService.stats(feedId),
       collectionHealth: this.health.report(feedId)
     };
   }
@@ -82,6 +98,18 @@ export class NewsArchive {
 
   listFetchAttempts(feedId, limit) {
     return this.refreshes.recent(feedId, limit);
+  }
+
+  collectDetails(feedId, options) {
+    return this.detailService.collect(feedId, options);
+  }
+
+  retryDetails(feedId, input = {}) {
+    return this.detailService.retry(feedId, input);
+  }
+
+  listDetailTasks(feedId, options) {
+    return this.detailService.list(feedId, options);
   }
 
   feedChanges(feedId) {
